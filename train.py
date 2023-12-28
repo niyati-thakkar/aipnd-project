@@ -70,7 +70,7 @@ def check_gpu(gpu_arg):
         return torch.device("cpu")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if device == "cpu":
-        print("CUDA was not found on device, using CPU instead.")
+        print("CUDA not found, using CPU instead.")
     return device
 
 # Function to load a pre-trained model
@@ -114,7 +114,7 @@ def validation(model, testloader, criterion, device):
 def train_network(model, trainloader, validloader, device, criterion, optimizer, epochs, print_every, steps):
     if type(epochs) == type(None):
         epochs = 12
-        print("Number of Epochs specified as 12.")
+        print("Number of Epochs specified as 5.")
 
     print("Training process initializing...\n")
 
@@ -166,7 +166,7 @@ def validate_model(model, testloader, device):
 # Function to save the model at a defined checkpoint
 def save_checkpoint(model, save_dir, train_data):
     if type(save_dir) == type(None):
-        print("Model checkpoint directory not specified, model will not be saved.")
+        print("Model checkpoint directory unknown, model not saved.")
     else:
         if isdir(save_dir):
             model.class_to_idx = train_data.class_to_idx
@@ -190,7 +190,7 @@ def save_checkpoint(model, save_dir, train_data):
 
             torch.save(checkpoint, 'my_checkpoint.pth')
         else:
-            print("Directory not found, model will not be saved.")
+            print("Directory not found, model not saved.")
 
 # Main function
 def main():
@@ -223,7 +223,7 @@ def main():
     
     if type(args.learning_rate) == type(None):
         learning_rate = 0.001
-        print("Learning rate specificed as 0.001")
+        print("Learning = 0.001")
     else: learning_rate = args.learning_rate
     
     criterion = nn.NLLLoss()
@@ -234,7 +234,7 @@ def main():
     
     trained_model = network_trainer(model, trainloader, validloader,device, criterion, optimizer, args.epochs, print_every, steps)
     
-    print("\nTraining process is completed!!")
+    print("\nTraining process completed")
     
     validate_model(trained_model, testloader, device)
    
