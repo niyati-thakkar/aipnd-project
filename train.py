@@ -47,7 +47,7 @@ def load_data(path):
     valid_dir = path + '/valid'
     test_dir = path + '/test'
     
-    # Define transforms for the training, validation, and testing sets
+    # Define transforms for the various sets such as training, validation, and testing sets
     train_transform = transforms.Compose([transforms.RandomRotation(50),
                                                   transforms.RandomResizedCrop(224),
                                                   transforms.RandomHorizontalFlip(),
