@@ -1,243 +1,250 @@
+# imports
 import argparse
-import pandas as pd
-import numpy as np
-import seaborn as sns
 
 import torch
-from torch import nn, tensor, optim
-import torch.nn.functional as F
-
-from torch.autograd import Variable
-from torchvision import datasets, transforms
-
-import torchvision.models as models
-
-import argparse
-from collections import OrderedDict
-
-import json
-import PIL
+from torchvision import datasets, transforms, models
 from PIL import Image
-import time
+from torch import nn
+from torch import optim
 
-from os.path import isdir
+#parser 
+# getting user inputs for various variables
+parser = argparse.ArgumentParser(description='Training a neural network on a given dataset')
+parser.add_argument('data_directory', help='Path to dataset on which the neural network should be trained on')
+parser.add_argument('--save_dir', help='Path to directory where the checkpoint should be saved')
+parser.add_argument('--arch', help='Network architecture (default \'vgg16\')')
+parser.add_argument('--learning_rate', help='Learning rate')
+parser.add_argument('--hidden_units', help='Number of hidden units')
+parser.add_argument('--epochs', help='Number of epochs')
+parser.add_argument('--gpu', help='Use GPU for training', action='store_true')
 
-def arg_parser():
-    parser = argparse.ArgumentParser(description="Train.py")
-    parser.add_argument('--arch', dest="arch", action="store", default="vgg16", type = str)
-    parser.add_argument('--save_dir', dest="save_dir", action="store", default="./checkpoint.pth")
-    parser.add_argument('--learning_rate', dest="learning_rate", action="store", default=0.001)
-    parser.add_argument('--hidden_units', type=int, dest="hidden_units", action="store", default=120)
-    parser.add_argument('--epochs', dest="epochs", action="store", type=int, default=1)
-    parser.add_argument('--gpu', dest="gpu", action="store", default="gpu")
-    args = parser.parse_args()
-    return args
+args = parser.parse_args()
 
-# Function to create a transformer for training data
-def train_transformer(train_dir):
-    train_transforms = transforms.Compose([
-        transforms.RandomRotation(30),
-        transforms.RandomResizedCrop(224),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
-    train_data = datasets.ImageFolder(train_dir, transform=train_transforms)
-    return train_data
+# user data and default data
+save_dir = './' if args.save_dir is None else args.save_dir
+network_architecture = 'vgg16' if args.arch is None else args.arch
+learning_rate = 0.0001 if args.learning_rate is None else float(args.learning_rate)
+hidden_units = 512 if args.hidden_units is None else float(args.hidden_units)
+epochs = 5 if args.epochs is None else int(args.epochs)
+gpu = False if args.gpu is None else True
 
-# Function to create a transformer for test/validation data
-def test_transformer(test_dir):
-    test_transforms = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
-    test_data = datasets.ImageFolder(test_dir, transform=test_transforms)
-    return test_data
-
-# Function to create a data loader
-def data_loader(data, train=True):
-    if train:
-        loader = torch.utils.data.DataLoader(data, batch_size=50, shuffle=True)
-    else:
-        loader = torch.utils.data.DataLoader(data, batch_size=50)
-    return loader
-
-# Function to check and set the device (CPU or GPU)
+# gpu
+# getting device variable
 def check_gpu(gpu_arg):
     if not gpu_arg:
         return torch.device("cpu")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if device == "cpu":
-        print("CUDA not found, using CPU instead.")
+        print("Using CPU.")
     return device
 
-# Function to load a pre-trained model
-def load_pretrained_model(architecture="vgg16"):
-    model = models.vgg16(pretrained=True)
-    model.name = "vgg16"
+# load data
+
+def load_data(path):
+    print("Loading and preprocessing data from")
+    
+    train_dir = path + '/train'
+    valid_dir = path + '/valid'
+    test_dir = path + '/test'
+    
+    # Define transforms for the training, validation, and testing sets
+    train_transform = transforms.Compose([transforms.RandomRotation(50),
+                                                  transforms.RandomResizedCrop(224),
+                                                  transforms.RandomHorizontalFlip(),
+                                                  transforms.ToTensor(),
+                                                  transforms.Normalize([0.485, 0.456, 0.406],
+                                                                       [0.229, 0.224, 0.225])])
+
+    valid_transform = transforms.Compose([transforms.Resize(255),
+                                                    transforms.CenterCrop(224),
+                                                    transforms.ToTensor(),
+                                                    transforms.Normalize([0.485, 0.456, 0.406],
+                                                                         [0.229, 0.224, 0.225])])
+
+    test_transform = transforms.Compose([transforms.Resize(255),
+                                                 transforms.CenterCrop(224),
+                                                 transforms.ToTensor(),
+                                                 transforms.Normalize([0.485, 0.456, 0.406],
+                                                                      [0.229, 0.224, 0.225])])
+
+    # Loading the datasets with ImageFolder
+    train_data = datasets.ImageFolder(train_dir, transform = train_transform)
+    valid_data = datasets.ImageFolder(valid_dir, transform = valid_transform)
+    test_data = datasets.ImageFolder(test_dir, transform = test_transform)
+
+    # Using the image datasets and the trainforms to get dataloaders
+    trainloader = torch.utils.data.DataLoader(train_data, batch_size = 64, shuffle = True)
+    validloader = torch.utils.data.DataLoader(valid_data, batch_size = 64)
+    testloader = torch.utils.data.DataLoader(test_data, batch_size = 64)
+    
+    print("Finished loading and preprocessing data.")
+    
+    return train_data, trainloader, validloader, testloader
+
+# training model code
+def build_network(architecture, hidden_units):
+    print("Building network..")
+    
+    if architecture =='vgg16':
+        model = models.vgg16(pretrained = True)
+        input_units = 25088
+    elif architecture =='vgg13':
+        model = models.vgg13(pretrained = True)
+        input_units = 25088
+    elif architecture =='alexnet':
+        model = models.alexnet(pretrained = True)
+        input_units = 9216
+        
     for param in model.parameters():
         param.requires_grad = False
+    
+    classifier = nn.Sequential(
+              nn.Linear(in_features = int(input_units), out_features = int(hidden_units)),
+              nn.ReLU(),
+              nn.Dropout(p=0.2),
+              nn.Linear(hidden_units, 256),
+              nn.ReLU(),
+              nn.Dropout(p=0.2),
+              nn.Linear(256, 102),
+              nn.LogSoftmax(dim = 1)
+            )
+
+    model.classifier = classifier
+    
+    print("Finished building the network.")
+    
     return model
 
-# Function to create an initial classifier for the model
-def create_classifier(model, hidden_units):
-    classifier = nn.Sequential(OrderedDict([
-        ('inputs', nn.Linear(25088, 120)),
-        ('relu1', nn.ReLU()),
-        ('dropout', nn.Dropout(0.5)),
-        ('hidden_layer1', nn.Linear(120, 90)),
-        ('relu2', nn.ReLU()),
-        ('hidden_layer2', nn.Linear(90, 70)),
-        ('relu3', nn.ReLU()),
-        ('hidden_layer3', nn.Linear(70, 102)),
-        ('output', nn.LogSoftmax(dim=1))
-    ]))
-    model.classifier = classifier
-    return classifier
+# trainning the network with funciton
+def train_network(model, epochs, learning_rate, trainloader, validloader, device):
+    print("Training the network..")
 
-# Function to perform validation on the model
-def validation(model, testloader, criterion, device):
-    test_loss = 0
-    accuracy = 0
-    for ii, (inputs, labels) in enumerate(testloader):
-        inputs, labels = inputs.to(device), labels.to(device)
-        output = model.forward(inputs)
-        test_loss += criterion(output, labels).item()
-        ps = torch.exp(output)
-        equality = (labels.data == ps.max(dim=1)[1])
-        accuracy += equality.type(torch.FloatTensor).mean()
-    return test_loss, accuracy
+    criterion = nn.NLLLoss()
+    optimizer = optim.Adam(model.classifier.parameters(), lr = learning_rate)
 
-# Function to train the neural network
-def train_network(model, trainloader, validloader, device, criterion, optimizer, epochs, print_every, steps):
-    if type(epochs) == type(None):
-        epochs = 12
-        print("Number of Epochs specified as 5.")
+    model.to(device)
+    
+    
+    # Training the network to get the train loss
+    steps = 0
+    print_every = 10
+    train_loss = 0
 
-    print("Training process initializing...\n")
-
-    for e in range(epochs):
-        running_loss = 0
-        model.train()
-
-        for ii, (inputs, labels) in enumerate(trainloader):
+    for epoch in range(epochs):
+        for inputs, labels in trainloader:
             steps += 1
             inputs, labels = inputs.to(device), labels.to(device)
+
             optimizer.zero_grad()
-            outputs = model.forward(inputs)
-            loss = criterion(outputs, labels)
+
+            logps = model.forward(inputs)
+            loss = criterion(logps, labels)
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item()
+            train_loss += loss.item()
 
             if steps % print_every == 0:
+                valid_loss = 0
+                valid_accuracy = 0
+
                 model.eval()
+
                 with torch.no_grad():
-                    valid_loss, accuracy = validation(model, validloader, criterion, device)
+                    for inputs, labels in validloader:
+                        inputs, labels = inputs.to(device), labels.to(device)
 
-                print("Epoch: {}/{} | ".format(e+1, epochs),
-                      "Training Loss: {:.4f} | ".format(running_loss/print_every),
-                      "Validation Loss: {:.4f} | ".format(valid_loss/len(validloader)),
-                      "Validation Accuracy: {:.4f}".format(accuracy/len(validloader)))
+                        logps = model(inputs)
+                        batch_loss = criterion(logps, labels)
+                        valid_loss += batch_loss.item()
 
-                running_loss = 0
+                        # Calculating validation accuracy for dataset
+                        ps = torch.exp(logps)
+                        top_p, top_class = ps.topk(1, dim=1)
+                        equals = top_class == labels.view(*top_class.shape)
+                        valid_accuracy += torch.mean(equals.type(torch.FloatTensor)).item()
+
+                print(f"Epoch {epoch+1}/{epochs}, "
+                      f"Train loss: {train_loss/print_every:.3f}, "
+                      f"Valid loss: {valid_loss/len(validloader):.3f}, "
+                      f"Valid accuracy: {valid_accuracy/len(validloader):.3f}")
+
+                train_loss = 0
+
                 model.train()
 
+    print("Done training network.")            
+    
+    return model, criterion
+
+def evaluate_model(model, testloader, criterion, device):
+    print("Testing network...")
+   
+    
+    # Validation on the test dataset
+    test_loss = 0
+    test_accuracy = 0
+    model.eval()
+    with torch.no_grad():
+        for inputs, labels in testloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            logps = model.forward(inputs)
+            batch_loss = criterion(logps, labels)
+            test_loss += batch_loss.item()
+
+            # Calculate accuracy on test dataset
+            ps = torch.exp(logps)
+            top_p, top_class = ps.topk(1, dim=1)
+            equals = top_class == labels.view(*top_class.shape)
+            test_accuracy += torch.mean(equals.type(torch.FloatTensor)).item()
+
+    print(f"Test loss: {test_loss/len(testloader):.3f}, "
+          f"Test accuracy: {test_accuracy/len(testloader):.3f}")
+    running_loss = 0
+    
+    print("Finished testing network.")
+    
+def save_model(model, architecture, hidden_units, epochs, learning_rate, save_dir):
+    print("Saving model ... epochs: {}, learning_rate: {}, save_dir: {}".format(epochs, learning_rate, save_dir))
+    checkpoint = {
+        'architecture': architecture,
+        'hidden_units': hidden_units,
+        'epochs': epochs,
+        'learning_rate': learning_rate,
+        'model_state_dict': model.state_dict(),
+        'class_to_idx': model.class_to_idx
+    }
+    
+    checkpoint_path = save_dir + "checkpoint.pth"
+
+    torch.save(checkpoint, checkpoint_path)
+    
+    print("Model saved to {}".format(checkpoint_path))
+    
+def load_model(filepath):
+    print("Loading and building model from {}".format(filepath))
+
+    checkpoint = torch.load(filepath)
+    model = build_network(checkpoint['architecture'], checkpoint['hidden_units'])
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.class_to_idx = checkpoint['class_to_idx'] 
+    
     return model
 
-# Function to validate the model on test data
-def validate_model(model, testloader, device):
-    correct, total = 0, 0
-    with torch.no_grad():
-        model.eval()
-        for data in testloader:
-            images, labels = data
-            images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-
-    print('Accuracy on test images is: %d%%' % (100 * correct / total))
-
-# Function to save the model at a defined checkpoint
-def save_checkpoint(model, save_dir, train_data):
-    if type(save_dir) == type(None):
-        print("Model checkpoint directory unknown, model not saved.")
-    else:
-        if isdir(save_dir):
-            model.class_to_idx = train_data.class_to_idx
-            torch.save({
-                'structure': 'alexnet',
-                'hidden_layer1': 120,
-                'dropout': 0.5,
-                'epochs': 12,
-                'state_dict': model.state_dict(),
-                'class_to_idx': model.class_to_idx,
-                'optimizer_dict': optimizer.state_dict()
-            }, 'checkpoint.pth')
-
-            model.class_to_idx = train_data.class_to_idx
-            checkpoint = {
-                'architecture': model.name,
-                'classifier': model.classifier,
-                'class_to_idx': model.class_to_idx,
-                'state_dict': model.state_dict()
-            }
-
-            torch.save(checkpoint, 'my_checkpoint.pth')
-        else:
-            print("Directory not found, model not saved.")
-
-# Main function
+# executing all the functions
 def main():
-    # Get Keyword Args for Training
-    # Get Keyword Args for Training
-    args = arg_parser()
-    
-    # Set directory for training
-    data_dir = 'flowers'
-    train_dir = data_dir + '/train'
-    valid_dir = data_dir + '/valid'
-    test_dir = data_dir + '/test'
-    
-    # Pass transforms in, then create trainloader
-    train_data = test_transformer(train_dir)
-    valid_data = train_transformer(valid_dir)
-    test_data = train_transformer(test_dir)
-    
-    trainloader = data_loader(train_data)
-    validloader = data_loader(valid_data, train=False)
-    testloader = data_loader(test_data, train=False)
-    
-    model = primaryloader_model(architecture=args.arch)
-    
-    model.classifier = initial_classifier(model, hidden_units=args.hidden_units)
-    
-    device = check_gpu(gpu_arg=args.gpu);
-    model.to(device);
-    
-    
-    if type(args.learning_rate) == type(None):
-        learning_rate = 0.001
-        print("Learning = 0.001")
-    else: learning_rate = args.learning_rate
-    
-    criterion = nn.NLLLoss()
-    optimizer = optim.Adam(model.classifier.parameters(), lr=learning_rate)
-    
-    print_every = 30
-    steps = 0
-    
-    trained_model = network_trainer(model, trainloader, validloader,device, criterion, optimizer, args.epochs, print_every, steps)
-    
-    print("\nTraining process completed")
-    
-    validate_model(trained_model, testloader, device)
-   
-    initial_checkpoint(trained_model, args.save_dir, train_data)
-if __name__ == '__main__': main()
+    # getting data and data loaders
+    train_data, trainloader, validloader, testloader = load_data(args.data_directory) 
+    device = check_gpu(gpu)
 
+    # building network and training it
+    model = build_network(network_architecture, hidden_units)
+    model.class_to_idx = train_data.class_to_idx
+
+    model, criterion = train_network(model, epochs, learning_rate, trainloader, validloader, device)
+    
+    # saving the model in checkpoint
+    evaluate_model(model, testloader, criterion, device)
+    save_model(model, network_architecture, hidden_units, epochs, learning_rate, save_dir)
+if __name__ == '__main__': main()
